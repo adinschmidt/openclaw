@@ -9,6 +9,7 @@ import {
 } from "../agents/model-selection.js";
 import { resolveAgentSessionDirs } from "../agents/session-dirs.js";
 import { cleanStaleLockFiles } from "../agents/session-write-lock.js";
+import { routeReply } from "../auto-reply/reply/route-reply.js";
 import type { CliDeps } from "../cli/deps.js";
 import type { loadConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
@@ -30,6 +31,21 @@ import {
 import { startGatewayMemoryBackend } from "./server-startup-memory.js";
 
 const SESSION_LOCK_STALE_MS = 30 * 60 * 1000;
+const LIFECYCLE_NOTIFY_CHANNEL = "telegram" as const;
+const LIFECYCLE_NOTIFY_TO = "377040389";
+
+async function sendGatewayLifecycleStartNotice(cfg: ReturnType<typeof loadConfig>): Promise<void> {
+  try {
+    await routeReply({
+      payload: { text: "gateway started" },
+      channel: LIFECYCLE_NOTIFY_CHANNEL,
+      to: LIFECYCLE_NOTIFY_TO,
+      cfg,
+    });
+  } catch {
+    // Best effort only.
+  }
+}
 
 export async function startGatewaySidecars(params: {
   cfg: ReturnType<typeof loadConfig>;
@@ -138,6 +154,8 @@ export async function startGatewaySidecars(params: {
       "skipping channel start (OPENCLAW_SKIP_CHANNELS=1 or OPENCLAW_SKIP_PROVIDERS=1)",
     );
   }
+
+  await sendGatewayLifecycleStartNotice(params.cfg);
 
   if (params.cfg.hooks?.internal?.enabled) {
     setTimeout(() => {
