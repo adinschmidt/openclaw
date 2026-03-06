@@ -287,6 +287,10 @@ export async function runPreparedReply(
     return undefined;
   }
   const isBareNewOrReset = rawBodyTrimmed === "/new" || rawBodyTrimmed === "/reset";
+  if (isNewSession && isBareNewOrReset && baseBodyTrimmedRaw.length === 0) {
+    typing.cleanup();
+    return { text: "new session successfully started" };
+  }
   const isBareSessionReset =
     isNewSession &&
     ((baseBodyTrimmedRaw.length === 0 && rawBodyTrimmed.length > 0) || isBareNewOrReset);
