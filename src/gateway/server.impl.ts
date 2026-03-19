@@ -4,7 +4,6 @@ import { getActiveEmbeddedRunCount } from "../agents/pi-embedded-runner/runs.js"
 import { registerSkillsChangeListener } from "../agents/skills/refresh.js";
 import { initSubagentRegistry } from "../agents/subagent-registry.js";
 import { getTotalPendingReplies } from "../auto-reply/reply/dispatcher-registry.js";
-import { routeReply } from "../auto-reply/reply/route-reply.js";
 import type { CanvasHostServer } from "../canvas-host/server.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
 import { formatCliCommand } from "../cli/command-format.js";
@@ -82,6 +81,7 @@ import {
   type GatewayUpdateAvailableEventPayload,
 } from "./events.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
+import { sendGatewayLifecycleNotice } from "./lifecycle-notify.js";
 import { startGatewayModelPricingRefresh } from "./model-pricing-cache.js";
 import { NodeRegistry } from "./node-registry.js";
 import type { startBrowserControlServerIfEnabled } from "./server-browser.js";
@@ -359,22 +359,6 @@ export type GatewayServerOptions = {
     prompter: import("../wizard/prompts.js").WizardPrompter,
   ) => Promise<void>;
 };
-
-const LIFECYCLE_NOTIFY_CHANNEL = "telegram" as const;
-const LIFECYCLE_NOTIFY_TO = "377040389";
-
-async function sendGatewayLifecycleStopNotice(cfg: OpenClawConfig): Promise<void> {
-  try {
-    await routeReply({
-      payload: { text: "gateway stopping" },
-      channel: LIFECYCLE_NOTIFY_CHANNEL,
-      to: LIFECYCLE_NOTIFY_TO,
-      cfg,
-    });
-  } catch {
-    // Best effort only.
-  }
-}
 
 export async function startGatewayServer(
   port = 18789,
@@ -1346,7 +1330,7 @@ export async function startGatewayServer(
 
   return {
     close: async (opts) => {
-      await sendGatewayLifecycleStopNotice(cfg);
+      await sendGatewayLifecycleNotice({ cfg, text: "gateway stopping" });
       // Run gateway_stop plugin hook before shutdown
       await runGlobalGatewayStopSafely({
         event: { reason: opts?.reason ?? "gateway stopping" },

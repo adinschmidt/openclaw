@@ -9,7 +9,6 @@ import {
 } from "../agents/model-selection.js";
 import { resolveAgentSessionDirs } from "../agents/session-dirs.js";
 import { cleanStaleLockFiles } from "../agents/session-write-lock.js";
-import { routeReply } from "../auto-reply/reply/route-reply.js";
 import type { CliDeps } from "../cli/deps.js";
 import type { loadConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
@@ -23,6 +22,7 @@ import { loadInternalHooks } from "../hooks/loader.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import type { loadOpenClawPlugins } from "../plugins/loader.js";
 import { type PluginServicesHandle, startPluginServices } from "../plugins/services.js";
+import { sendGatewayLifecycleNotice } from "./lifecycle-notify.js";
 import { startBrowserControlServerIfEnabled } from "./server-browser.js";
 import {
   scheduleRestartSentinelWake,
@@ -31,21 +31,6 @@ import {
 import { startGatewayMemoryBackend } from "./server-startup-memory.js";
 
 const SESSION_LOCK_STALE_MS = 30 * 60 * 1000;
-const LIFECYCLE_NOTIFY_CHANNEL = "telegram" as const;
-const LIFECYCLE_NOTIFY_TO = "377040389";
-
-async function sendGatewayLifecycleStartNotice(cfg: ReturnType<typeof loadConfig>): Promise<void> {
-  try {
-    await routeReply({
-      payload: { text: "gateway started" },
-      channel: LIFECYCLE_NOTIFY_CHANNEL,
-      to: LIFECYCLE_NOTIFY_TO,
-      cfg,
-    });
-  } catch {
-    // Best effort only.
-  }
-}
 
 export async function startGatewaySidecars(params: {
   cfg: ReturnType<typeof loadConfig>;
@@ -155,7 +140,7 @@ export async function startGatewaySidecars(params: {
     );
   }
 
-  await sendGatewayLifecycleStartNotice(params.cfg);
+  await sendGatewayLifecycleNotice({ cfg: params.cfg, text: "gateway started" });
 
   if (params.cfg.hooks?.internal?.enabled) {
     setTimeout(() => {
