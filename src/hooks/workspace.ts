@@ -14,6 +14,7 @@ import {
   resolveOpenClawMetadata,
 } from "./frontmatter.js";
 import { resolvePluginHookDirs } from "./plugin-hooks.js";
+import { resolveHookEntries } from "./policy.js";
 import type {
   Hook,
   HookEligibilityContext,
@@ -27,6 +28,11 @@ type HookPackageManifest = {
   name?: string;
 } & Partial<Record<typeof MANIFEST_KEY, { hooks?: string[] }>>;
 const log = createSubsystemLogger("hooks/workspace");
+
+type LoadedHook = {
+  hook: Hook;
+  frontmatter: ParsedHookFrontmatter;
+};
 
 function filterHookEntries(
   entries: HookEntry[],
@@ -79,7 +85,7 @@ function loadHookFromDir(params: {
   source: HookSource;
   pluginId?: string;
   nameHint?: string;
-}): Hook | null {
+}): LoadedHook | null {
   const hookMdPath = path.join(params.hookDir, "HOOK.md");
   const content = readBoundaryFileUtf8({
     absolutePath: hookMdPath,
@@ -123,13 +129,16 @@ function loadHookFromDir(params: {
     }
 
     return {
-      name,
-      description,
-      source: params.source,
-      pluginId: params.pluginId,
-      filePath: hookMdPath,
-      baseDir,
-      handlerPath,
+      hook: {
+        name,
+        description,
+        source: params.source,
+        pluginId: params.pluginId,
+        filePath: hookMdPath,
+        baseDir,
+        handlerPath,
+      },
+      frontmatter,
     };
   } catch (err) {
     const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
@@ -141,7 +150,11 @@ function loadHookFromDir(params: {
 /**
  * Scan a directory for hooks (subdirectories containing HOOK.md)
  */
-function loadHooksFromDir(params: { dir: string; source: HookSource; pluginId?: string }): Hook[] {
+function loadHooksFromDir(params: {
+  dir: string;
+  source: HookSource;
+  pluginId?: string;
+}): LoadedHook[] {
   const { dir, source, pluginId } = params;
 
   if (!fs.existsSync(dir)) {
@@ -153,7 +166,7 @@ function loadHooksFromDir(params: { dir: string; source: HookSource; pluginId?: 
     return [];
   }
 
-  const hooks: Hook[] = [];
+  const hooks: LoadedHook[] = [];
   const entries = fs.readdirSync(dir, { withFileTypes: true });
 
   for (const entry of entries) {
@@ -211,16 +224,7 @@ export function loadHookEntriesFromDir(params: {
     source: params.source,
     pluginId: params.pluginId,
   });
-  return hooks.map((hook) => {
-    let frontmatter: ParsedHookFrontmatter = {};
-    const raw = readBoundaryFileUtf8({
-      absolutePath: hook.filePath,
-      rootPath: hook.baseDir,
-      boundaryLabel: "hook directory",
-    });
-    if (raw !== null) {
-      frontmatter = parseFrontmatter(raw);
-    }
+  return hooks.map(({ hook, frontmatter }) => {
     const entry: HookEntry = {
       hook: {
         ...hook,
@@ -235,7 +239,7 @@ export function loadHookEntriesFromDir(params: {
   });
 }
 
-function loadHookEntries(
+export function discoverWorkspaceHookEntries(
   workspaceDir: string,
   opts?: {
     config?: OpenClawConfig;
@@ -265,7 +269,7 @@ function loadHookEntries(
     const resolved = resolveUserPath(dir);
     return loadHookEntriesFromDir({
       dir: resolved,
-      source: "openclaw-workspace", // Extra dirs treated as workspace
+      source: "openclaw-managed",
     });
   });
   const pluginHooks = pluginHookDirs.flatMap(({ dir, pluginId }) =>
@@ -284,25 +288,7 @@ function loadHookEntries(
     source: "openclaw-workspace",
   });
 
-  const merged = new Map<string, HookEntry>();
-  // Precedence: extra < bundled < plugin < managed < workspace (workspace wins)
-  for (const entry of extraHooks) {
-    merged.set(entry.hook.name, entry);
-  }
-  for (const entry of bundledHooks) {
-    merged.set(entry.hook.name, entry);
-  }
-  for (const entry of pluginHooks) {
-    merged.set(entry.hook.name, entry);
-  }
-  for (const entry of managedHooks) {
-    merged.set(entry.hook.name, entry);
-  }
-  for (const entry of workspaceHooks) {
-    merged.set(entry.hook.name, entry);
-  }
-
-  return Array.from(merged.values());
+  return [...extraHooks, ...bundledHooks, ...pluginHooks, ...managedHooks, ...workspaceHooks];
 }
 
 export function buildWorkspaceHookSnapshot(
@@ -316,7 +302,7 @@ export function buildWorkspaceHookSnapshot(
     snapshotVersion?: number;
   },
 ): HookSnapshot {
-  const hookEntries = opts?.entries ?? loadHookEntries(workspaceDir, opts);
+  const hookEntries = opts?.entries ?? loadWorkspaceHookEntries(workspaceDir, opts);
   const eligible = filterHookEntries(hookEntries, opts?.config, opts?.eligibility);
 
   return {
@@ -335,9 +321,16 @@ export function loadWorkspaceHookEntries(
     config?: OpenClawConfig;
     managedHooksDir?: string;
     bundledHooksDir?: string;
+    entries?: HookEntry[];
   },
 ): HookEntry[] {
-  return loadHookEntries(workspaceDir, opts);
+  return resolveHookEntries(opts?.entries ?? discoverWorkspaceHookEntries(workspaceDir, opts), {
+    onCollisionIgnored: ({ name, kept, ignored }) => {
+      log.warn(
+        `Ignoring ${ignored.hook.source} hook "${name}" because it cannot override ${kept.hook.source} hook code`,
+      );
+    },
+  });
 }
 
 function readBoundaryFileUtf8(params: {
